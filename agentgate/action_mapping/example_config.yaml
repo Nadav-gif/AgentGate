@@ -1,0 +1,82 @@
+# AgentGate Tool-to-AWS Action Mapping Configuration
+#
+# Each entry maps an agent tool call to one or more AWS actions + resources.
+# Resource ARNs can contain {placeholders} that get filled from tool arguments.
+
+version: "1"
+
+account_id: "123456789012"
+region: "us-east-1"
+
+tools:
+  query_database:
+    description: "Query a DynamoDB table"
+    aws_actions:
+      - action: "dynamodb:Query"
+        resource: "arn:aws:dynamodb:{region}:{account_id}:table/{table}"
+    required_args:
+      - table
+
+  read_file:
+    description: "Read an object from S3"
+    aws_actions:
+      - action: "s3:GetObject"
+        resource: "arn:aws:s3:::{bucket}/{key}"
+    required_args:
+      - bucket
+      - key
+
+  write_file:
+    description: "Write an object to S3"
+    aws_actions:
+      - action: "s3:PutObject"
+        resource: "arn:aws:s3:::{bucket}/{key}"
+    required_args:
+      - bucket
+      - key
+
+  delete_file:
+    description: "Delete an object from S3"
+    aws_actions:
+      - action: "s3:DeleteObject"
+        resource: "arn:aws:s3:::{bucket}/{key}"
+    required_args:
+      - bucket
+      - key
+
+  list_bucket:
+    description: "List objects in an S3 bucket"
+    aws_actions:
+      - action: "s3:ListBucket"
+        resource: "arn:aws:s3:::{bucket}"
+    required_args:
+      - bucket
+
+  invoke_lambda:
+    description: "Invoke a Lambda function"
+    aws_actions:
+      - action: "lambda:InvokeFunction"
+        resource: "arn:aws:lambda:{region}:{account_id}:function:{function_name}"
+    required_args:
+      - function_name
+
+  scan_table:
+    description: "Full scan of a DynamoDB table (reads all items)"
+    aws_actions:
+      - action: "dynamodb:Scan"
+        resource: "arn:aws:dynamodb:{region}:{account_id}:table/{table}"
+    required_args:
+      - table
+
+  copy_file:
+    description: "Copy an S3 object (requires read from source + write to destination)"
+    aws_actions:
+      - action: "s3:GetObject"
+        resource: "arn:aws:s3:::{source_bucket}/{source_key}"
+      - action: "s3:PutObject"
+        resource: "arn:aws:s3:::{dest_bucket}/{dest_key}"
+    required_args:
+      - source_bucket
+      - source_key
+      - dest_bucket
+      - dest_key
