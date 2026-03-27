@@ -10,6 +10,7 @@ from agentgate.action_mapping.resolver import ResolutionError, resolve
 from agentgate.permission_engine.evaluator import can_do
 from agentgate.permission_engine.models import Decision
 from agentgate.proxy.dependencies import AppDependencies, get_deps
+from agentgate.proxy.escalation import check_escalation
 from agentgate.proxy.models import (
     ActionResult,
     ToolDeniedResponse,
@@ -53,13 +54,15 @@ def execute_tool(
     Flow:
     1. Authenticate the API key → get user context
     2. Resolve tool call → AWS action(s) + resource(s)
-    3. Check each action with the permission engine
-    4. If any denied → return 403 with reason
-    5. If all allowed → execute via mock service → return results
-    6. Log everything to audit database
+    3. Check each action with the permission engine (IAM)
+    4. Check cross-system escalation rules (session history)
+    5. If any denied → return 403 with reason
+    6. If all allowed → execute via mock service → return results
+    7. Log everything to audit database
     """
     # Step 1: Authenticate
     user = deps.authenticator.authenticate(x_api_key)
+    session_key = f"{user.user_arn}:{user.agent_id}"
 
     # Step 2: Resolve tool call to AWS actions
     try:
@@ -67,11 +70,11 @@ def execute_tool(
     except ResolutionError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    # Step 3 & 4: Check permissions for each resolved action
+    # Step 3: Check IAM permissions for each resolved action
     for action in resolved_actions:
         result = can_do(user.user_arn, action.action, action.resource, deps.fetcher)
 
-        # Log every decision
+        # Log every IAM decision
         deps.audit.log_decision(
             user_arn=user.user_arn,
             agent_id=user.agent_id,
@@ -94,7 +97,33 @@ def execute_tool(
                 ).model_dump(),
             )
 
-    # Step 5: All actions allowed — execute via mock services
+    # Step 4: Check cross-system escalation rules
+    history = deps.session_tracker.get_history(session_key)
+    for action in resolved_actions:
+        esc_result = check_escalation(history, action.action, deps.escalation_rules)
+        if esc_result is not None:
+            # Log the escalation block
+            deps.audit.log_decision(
+                user_arn=user.user_arn,
+                agent_id=user.agent_id,
+                tool_name=request.tool_name,
+                aws_action=action.action,
+                resource=action.resource,
+                decision="DENY",
+                reason=esc_result.reason,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=ToolDeniedResponse(
+                    tool_name=request.tool_name,
+                    denied_action=action.action,
+                    resource=action.resource,
+                    decision="DENY",
+                    reason=esc_result.reason,
+                ).model_dump(),
+            )
+
+    # Step 5: All checks passed — execute via mock services
     results: list[ActionResult] = []
     for action in resolved_actions:
         aws_params = _build_aws_params(request.tool_args)
@@ -104,6 +133,10 @@ def execute_tool(
             resource=action.resource,
             response=mock_response.response if mock_response.success else {"error": mock_response.error},
         ))
+
+    # Step 6: Record actions in session history (only after successful execution)
+    for action in resolved_actions:
+        deps.session_tracker.record(session_key, action.action)
 
     return ToolExecutionResponse(
         tool_name=request.tool_name,

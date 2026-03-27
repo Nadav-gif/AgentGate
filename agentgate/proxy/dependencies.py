@@ -7,7 +7,7 @@ individual get_*() functions are used as FastAPI dependencies in routes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from agentgate.action_mapping.config_loader import MappingConfig
 from agentgate.mock_aws.base import MockServiceRegistry
@@ -15,6 +15,11 @@ from agentgate.permission_engine.models import IdentityPolicies
 from agentgate.permission_engine.policy_fetcher import PolicyFetcherProtocol
 from agentgate.proxy.audit import AuditLogger
 from agentgate.proxy.auth import ApiKeyAuthenticator
+from agentgate.proxy.escalation import (
+    DEFAULT_ESCALATION_RULES,
+    EscalationRule,
+    SessionTracker,
+)
 
 
 class FakePolicyFetcher:
@@ -40,6 +45,8 @@ class AppDependencies:
     registry: MockServiceRegistry
     fetcher: PolicyFetcherProtocol
     audit: AuditLogger
+    session_tracker: SessionTracker = field(default_factory=SessionTracker)
+    escalation_rules: list[EscalationRule] = field(default_factory=lambda: list(DEFAULT_ESCALATION_RULES))
 
 
 # Global instance — set by create_dependencies(), accessed by route handlers
