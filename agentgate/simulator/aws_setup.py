@@ -158,7 +158,7 @@ def create_resources(profile: str = "default") -> dict:
         resp = iam.create_role(
             RoleName=f"{PREFIX}agent-role",
             AssumeRolePolicyDocument=json.dumps(ROLE_TRUST_POLICY),
-            Description="AgentGate demo — over-provisioned agent role for privilege creep testing",
+            Description="AgentGate demo - over-provisioned agent role for privilege creep testing",
         )
         results["role_arn"] = resp["Role"]["Arn"]
     except iam.exceptions.EntityAlreadyExistsException:

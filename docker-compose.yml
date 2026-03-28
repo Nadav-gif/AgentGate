@@ -1,0 +1,9 @@
+services:
+  proxy:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - AGENTGATE_MODE=${AGENTGATE_MODE:-mock}

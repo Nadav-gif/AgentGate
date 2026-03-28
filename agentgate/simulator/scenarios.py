@@ -10,13 +10,23 @@ difference is where the IAM policies come from.
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-
 from agentgate.proxy.dependencies import AppDependencies
 from agentgate.simulator.models import ScenarioResult, StepResult
 
 
-def _execute_tool(client: TestClient, tool_name: str, tool_args: dict, api_key: str) -> dict:
+def _reset_sessions(client, deps: AppDependencies | None) -> None:
+    """Reset session tracker state between scenarios.
+
+    In mock/real mode, clears directly via deps. In live mode, calls the
+    /reset-sessions endpoint on the deployed proxy.
+    """
+    if deps is not None:
+        deps.session_tracker.clear_all()
+    else:
+        client.post("/reset-sessions")
+
+
+def _execute_tool(client, tool_name: str, tool_args: dict, api_key: str) -> dict:
     """Helper: call /execute-tool and return parsed response info."""
     resp = client.post(
         "/execute-tool",
@@ -37,7 +47,7 @@ def _execute_tool(client: TestClient, tool_name: str, tool_args: dict, api_key: 
     return result
 
 
-def scenario_a_authorization_bypass(client: TestClient, deps: AppDependencies) -> ScenarioResult:
+def scenario_a_authorization_bypass(client, deps: AppDependencies | None) -> ScenarioResult:
     """Scenario A: Authorization Bypass.
 
     A restricted user (bob) tries to access resources beyond their IAM
@@ -93,7 +103,7 @@ def scenario_a_authorization_bypass(client: TestClient, deps: AppDependencies) -
     return scenario
 
 
-def scenario_b_privilege_creep(client: TestClient, deps: AppDependencies) -> ScenarioResult:
+def scenario_b_privilege_creep(client, deps: AppDependencies) -> ScenarioResult:
     """Scenario B: Privilege Creep Detection.
 
     The agent role has 7 permissions but only some are ever used. We
@@ -189,7 +199,7 @@ def scenario_b_privilege_creep(client: TestClient, deps: AppDependencies) -> Sce
     return scenario
 
 
-def scenario_c_cross_system_escalation(client: TestClient, deps: AppDependencies) -> ScenarioResult:
+def scenario_c_cross_system_escalation(client, deps: AppDependencies | None) -> ScenarioResult:
     """Scenario C: Cross-System Escalation.
 
     Alice has IAM permission for both DynamoDB reads and SES email.
@@ -212,7 +222,7 @@ def scenario_c_cross_system_escalation(client: TestClient, deps: AppDependencies
     )
 
     # Clear session state for a clean test
-    deps.session_tracker.clear_all()
+    _reset_sessions(client, deps)
 
     # Step 1: Alice sends email with no prior read — should be ALLOWED
     result = _execute_tool(client, "send_email", {
@@ -229,7 +239,7 @@ def scenario_c_cross_system_escalation(client: TestClient, deps: AppDependencies
     ))
 
     # Clear session for the escalation test
-    deps.session_tracker.clear_all()
+    _reset_sessions(client, deps)
 
     # Step 2: Alice queries DynamoDB — should be ALLOWED
     result = _execute_tool(client, "query_database", {"table": "employees"}, "alice-key")

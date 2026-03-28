@@ -142,3 +142,12 @@ def execute_tool(
         tool_name=request.tool_name,
         results=results,
     )
+
+
+@router.post("/reset-sessions")
+def reset_sessions(
+    deps: AppDependencies = Depends(get_deps),
+) -> dict:
+    """Clear all session tracking state. Used by the simulator between scenarios."""
+    deps.session_tracker.clear_all()
+    return {"status": "ok", "message": "All sessions cleared"}

@@ -1,12 +1,14 @@
 """Simulator runner — sets up the proxy and runs attack scenarios.
 
-Two modes:
-  mock  — uses FakePolicyFetcher with hardcoded policies (no AWS needed)
-  real  — uses AwsPolicyFetcher with real AWS IAM (requires AWS credentials)
+Three modes:
+  mock  — FakePolicyFetcher with hardcoded policies (no AWS needed)
+  real  — AwsPolicyFetcher with real AWS IAM, in-process via TestClient
+  live  — real HTTP requests to a deployed proxy (Docker/Azure)
 
 Usage:
   python -m agentgate.simulator --mode mock
-  python -m agentgate.simulator --mode real --profile my-aws-profile
+  python -m agentgate.simulator --mode real --profile agentgate
+  python -m agentgate.simulator --mode live --url http://localhost:8000
 """
 
 from __future__ import annotations
@@ -73,7 +75,7 @@ def _tool_mapping_config() -> dict:
 
 
 def _api_keys() -> dict:
-    """API key → user mapping used by both modes."""
+    """API key -> user mapping used by both modes."""
     return {
         "alice-key": {"user_arn": ALICE_ARN, "agent_id": "agent-alice"},
         "bob-key": {"user_arn": BOB_ARN, "agent_id": "agent-bob"},
@@ -102,7 +104,7 @@ def _mock_services() -> MockServiceRegistry:
 
 
 def _agent_role_policy() -> dict:
-    """The agent role's IAM policy — intentionally over-provisioned."""
+    """The agent role's IAM policy -- intentionally over-provisioned."""
     return {
         "Version": "2012-10-17",
         "Statement": [
@@ -218,6 +220,25 @@ def create_real_app(profile: str = "default") -> tuple[TestClient, AppDependenci
     return TestClient(app), deps
 
 
+# --- Live mode ---
+
+
+class LiveClient:
+    """HTTP client that mimics TestClient's interface for live deployments.
+
+    Makes real HTTP requests to a deployed proxy using httpx.
+    """
+
+    def __init__(self, base_url: str) -> None:
+        import httpx
+
+        self._base_url = base_url.rstrip("/")
+        self._client = httpx.Client(base_url=self._base_url, timeout=30.0)
+
+    def post(self, path: str, json: dict | None = None, headers: dict | None = None):
+        return self._client.post(path, json=json, headers=headers)
+
+
 # --- Report printing ---
 
 
@@ -226,7 +247,7 @@ def print_report(results: list[ScenarioResult]) -> None:
     all_passed = all(r.passed for r in results)
 
     print("\n" + "=" * 70)
-    print("  AgentGate Attack Simulator — Results")
+    print("  AgentGate Attack Simulator -- Results")
     print("=" * 70)
 
     for scenario in results:
@@ -255,29 +276,44 @@ def print_report(results: list[ScenarioResult]) -> None:
 # --- Main ---
 
 
-def run(mode: str = "mock", profile: str = "default") -> list[ScenarioResult]:
+def run(mode: str = "mock", profile: str = "default", url: str = "") -> list[ScenarioResult]:
     """Run all attack scenarios and return results.
 
     Args:
-        mode: "mock" (no AWS needed) or "real" (requires AWS credentials).
+        mode: "mock", "real", or "live".
         profile: AWS profile name (only used in real mode).
+        url: base URL of the deployed proxy (only used in live mode).
     """
     print(f"\nStarting AgentGate Attack Simulator (mode={mode})...\n")
 
-    if mode == "real":
+    if mode == "live":
+        if not url:
+            print("ERROR: --url is required for live mode")
+            sys.exit(1)
+        client = LiveClient(url)
+        # In live mode, deps is None — scenarios that need deps will skip
+        deps = None
+    elif mode == "real":
         client, deps = create_real_app(profile=profile)
     else:
         client, deps = create_mock_app()
 
     results = [
         scenario_a_authorization_bypass(client, deps),
-        scenario_b_privilege_creep(client, deps),
         scenario_c_cross_system_escalation(client, deps),
     ]
 
+    # Scenario B (privilege creep) requires access to deps for auditor tools.
+    # In live mode we skip it since we can't access the server's internals.
+    if deps is not None:
+        results.insert(1, scenario_b_privilege_creep(client, deps))
+    else:
+        print("  [SKIP] Scenario B: Privilege Creep Detection (requires local deps, not available in live mode)\n")
+
     print_report(results)
 
-    deps.audit.close()
+    if deps is not None:
+        deps.audit.close()
     return results
 
 
@@ -288,16 +324,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="AgentGate Attack Simulator")
     parser.add_argument(
         "--mode",
-        choices=["mock", "real"],
+        choices=["mock", "real", "live"],
         default="mock",
-        help="mock = hardcoded policies (no AWS), real = actual AWS IAM",
+        help="mock = hardcoded policies, real = AWS IAM in-process, live = HTTP to deployed proxy",
     )
     parser.add_argument(
         "--profile",
         default="default",
         help="AWS profile name (only used with --mode real)",
     )
+    parser.add_argument(
+        "--url",
+        default="",
+        help="Base URL of deployed proxy (only used with --mode live, e.g. http://localhost:8000)",
+    )
     args = parser.parse_args()
 
-    results = run(mode=args.mode, profile=args.profile)
+    results = run(mode=args.mode, profile=args.profile, url=args.url)
     sys.exit(0 if all(r.passed for r in results) else 1)
