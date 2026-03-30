@@ -38,9 +38,16 @@ from agentgate.simulator.scenarios import (
 
 # --- Constants ---
 
-ALICE_ARN = "arn:aws:iam::123456789012:user/alice"
-BOB_ARN = "arn:aws:iam::123456789012:user/bob"
-AGENT_ROLE_ARN = "arn:aws:iam::123456789012:role/agent-service-role"
+# Mock mode ARNs (fake account)
+MOCK_ALICE_ARN = "arn:aws:iam::123456789012:user/alice"
+MOCK_BOB_ARN = "arn:aws:iam::123456789012:user/bob"
+MOCK_AGENT_ROLE_ARN = "arn:aws:iam::123456789012:role/agent-service-role"
+
+# Real mode ARNs (actual AWS account)
+REAL_ACCOUNT_ID = "682033501708"
+REAL_ALICE_ARN = f"arn:aws:iam::{REAL_ACCOUNT_ID}:user/agentgate-alice"
+REAL_BOB_ARN = f"arn:aws:iam::{REAL_ACCOUNT_ID}:user/agentgate-bob"
+REAL_AGENT_ROLE_ARN = f"arn:aws:iam::{REAL_ACCOUNT_ID}:role/agentgate-agent-role"
 
 
 # --- Shared config ---
@@ -74,11 +81,13 @@ def _tool_mapping_config() -> dict:
     }
 
 
-def _api_keys() -> dict:
-    """API key -> user mapping used by both modes."""
+def _api_keys(real: bool = False) -> dict:
+    """API key -> user mapping."""
+    alice = REAL_ALICE_ARN if real else MOCK_ALICE_ARN
+    bob = REAL_BOB_ARN if real else MOCK_BOB_ARN
     return {
-        "alice-key": {"user_arn": ALICE_ARN, "agent_id": "agent-alice"},
-        "bob-key": {"user_arn": BOB_ARN, "agent_id": "agent-bob"},
+        "alice-key": {"user_arn": alice, "agent_id": "agent-alice"},
+        "bob-key": {"user_arn": bob, "agent_id": "agent-bob"},
     }
 
 
@@ -156,23 +165,23 @@ def create_mock_app() -> tuple[TestClient, AppDependencies]:
     """
     fetcher = FakePolicyFetcher({
         # Alice: can read S3, query DynamoDB, send email
-        ALICE_ARN: IdentityPolicies(inline_policies=[
+        MOCK_ALICE_ARN: IdentityPolicies(inline_policies=[
             _allow_policy(["s3:GetObject", "s3:PutObject"]),
             _allow_policy("dynamodb:Query"),
             _allow_policy("ses:SendEmail"),
         ]),
         # Bob: can only query DynamoDB, explicitly denied S3
-        BOB_ARN: IdentityPolicies(inline_policies=[
+        MOCK_BOB_ARN: IdentityPolicies(inline_policies=[
             _allow_policy("dynamodb:Query"),
             _deny_policy("s3:*"),
         ]),
         # Agent role: over-provisioned (for privilege creep detection)
-        AGENT_ROLE_ARN: IdentityPolicies(inline_policies=[_agent_role_policy()]),
+        MOCK_AGENT_ROLE_ARN: IdentityPolicies(inline_policies=[_agent_role_policy()]),
     })
 
     tmp_dir = tempfile.mkdtemp()
     deps = AppDependencies(
-        authenticator=ApiKeyAuthenticator(_api_keys()),
+        authenticator=ApiKeyAuthenticator(_api_keys(real=False)),
         config=load_config_from_dict(_tool_mapping_config()),
         registry=_mock_services(),
         fetcher=fetcher,
@@ -206,10 +215,14 @@ def create_real_app(profile: str = "default") -> tuple[TestClient, AppDependenci
     session = boto3.Session(profile_name=profile)
     fetcher = AwsPolicyFetcher(session=session)
 
+    # Use real account ID in tool mapping so resource ARNs match
+    real_config = _tool_mapping_config()
+    real_config["account_id"] = REAL_ACCOUNT_ID
+
     tmp_dir = tempfile.mkdtemp()
     deps = AppDependencies(
-        authenticator=ApiKeyAuthenticator(_api_keys()),
-        config=load_config_from_dict(_tool_mapping_config()),
+        authenticator=ApiKeyAuthenticator(_api_keys(real=True)),
+        config=load_config_from_dict(real_config),
         registry=_mock_services(),
         fetcher=fetcher,
         audit=AuditLogger(db_path=f"{tmp_dir}/simulator_audit.db"),
@@ -306,7 +319,8 @@ def run(mode: str = "mock", profile: str = "default", url: str = "") -> list[Sce
     # Scenario B (privilege creep) requires access to deps for auditor tools.
     # In live mode we skip it since we can't access the server's internals.
     if deps is not None:
-        results.insert(1, scenario_b_privilege_creep(client, deps))
+        role_arn = REAL_AGENT_ROLE_ARN if mode == "real" else ""
+        results.insert(1, scenario_b_privilege_creep(client, deps, agent_role_arn=role_arn))
     else:
         print("  [SKIP] Scenario B: Privilege Creep Detection (requires local deps, not available in live mode)\n")
 

@@ -103,7 +103,7 @@ def scenario_a_authorization_bypass(client, deps: AppDependencies | None) -> Sce
     return scenario
 
 
-def scenario_b_privilege_creep(client, deps: AppDependencies) -> ScenarioResult:
+def scenario_b_privilege_creep(client, deps: AppDependencies, agent_role_arn: str = "") -> ScenarioResult:
     """Scenario B: Privilege Creep Detection.
 
     The agent role has 7 permissions but only some are ever used. We
@@ -161,7 +161,8 @@ def scenario_b_privilege_creep(client, deps: AppDependencies) -> ScenarioResult:
 
     # Step 4: Use auditor tools to detect privilege creep
     # Get what the agent role is allowed to do
-    agent_role_arn = "arn:aws:iam::123456789012:role/agent-service-role"
+    if not agent_role_arn:
+        agent_role_arn = "arn:aws:iam::123456789012:role/agent-service-role"
     policies_tool = GetAgentRolePoliciesTool(fetcher=deps.fetcher)
     policies_raw = json.loads(policies_tool._run(role_arn=agent_role_arn))
 
