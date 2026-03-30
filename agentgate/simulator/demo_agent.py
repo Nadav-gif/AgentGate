@@ -66,16 +66,16 @@ def run_agent(user: str, task: str, base_url: str = DEFAULT_URL) -> None:
         })
 
         if result["status_code"] == 200:
-            print(f"[Proxy] Status: 200 ALLOWED")
+            print("[Proxy] Status: 200 ALLOWED")
             data = result["body"].get("results", [{}])[0].get("response", {})
             print(f"[Proxy] Response: {json.dumps(data, indent=2)[:200]}")
-            print(f"\n[Agent] Got the report data. Task complete.")
+            print("\n[Agent] Got the report data. Task complete.")
         else:
             detail = result["body"].get("detail", {})
             reason = detail.get("reason", "Unknown")
-            print(f"[Proxy] Status: 403 DENIED")
+            print("[Proxy] Status: 403 DENIED")
             print(f"[Proxy] Reason: {reason}")
-            print(f"\n[Agent] I was blocked from reading the file.")
+            print("\n[Agent] I was blocked from reading the file.")
             print(f"[Agent] AgentGate checked {user}'s IAM permissions and denied the request.")
 
     elif "email" in task.lower() or "send" in task.lower():
@@ -86,9 +86,9 @@ def run_agent(user: str, task: str, base_url: str = DEFAULT_URL) -> None:
         result = agent_execute(base_url, api_key, "query_database", {"table": "employees"})
 
         if result["status_code"] == 200:
-            print(f"[Proxy] Status: 200 ALLOWED\n")
+            print("[Proxy] Status: 200 ALLOWED\n")
         else:
-            print(f"[Proxy] Status: 403 DENIED\n")
+            print("[Proxy] Status: 403 DENIED\n")
             return
 
         # Step 2: Send email (should be blocked by escalation)
@@ -100,15 +100,15 @@ def run_agent(user: str, task: str, base_url: str = DEFAULT_URL) -> None:
         })
 
         if result["status_code"] == 200:
-            print(f"[Proxy] Status: 200 ALLOWED")
-            print(f"\n[Agent] Email sent. Task complete.")
+            print("[Proxy] Status: 200 ALLOWED")
+            print("\n[Agent] Email sent. Task complete.")
         else:
             detail = result["body"].get("detail", {})
             reason = detail.get("reason", "Unknown")
-            print(f"[Proxy] Status: 403 DENIED")
-            print(f"[Proxy] Reason: {reason}")
-            print(f"\n[Agent] I was blocked from sending the email.")
-            print(f"[Agent] AgentGate detected a dangerous cross-system pattern.")
+            print("[Proxy] Status: 403 DENIED")
+            print("[Proxy] Reason: {reason}")
+            print("\n[Agent] I was blocked from sending the email.")
+            print("[Agent] AgentGate detected a dangerous cross-system pattern.")
 
     print()
 
