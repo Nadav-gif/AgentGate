@@ -70,7 +70,7 @@ You'll see a report where a restricted user is blocked from reading S3 (while an
 
 ## Running it as a service (Docker)
 
-This is how you deploy AgentGate as a running server that your agents talk to.
+This is how you run AgentGate as a server that your agents talk to. The steps below run it locally; the next section deploys the exact same container to Azure so your agents can reach it over the internet.
 
 **1. Configure it.** Copy the example environment file and edit it:
 
@@ -121,6 +121,41 @@ A denied response tells you exactly why:
 }
 ```
 
+## Deploy to Azure (Container Instances)
+
+In real use, AgentGate runs as a proxy in the cloud and your agents send traffic to it over the internet — not to `localhost`. This project was deployed to **Azure Container Instances (ACI)** as a single public container (`agentgate-proxy` in resource group `agentgate-rg`, region East US), reachable at a public address such as:
+
+```
+http://agentgate-proxy.eastus.azurecontainer.io:8000
+```
+
+The deployment files live in [`deploy/`](deploy/):
+
+- [`deploy/deploy-azure.sh`](deploy/deploy-azure.sh) — one command that builds the image, pushes it to an Azure Container Registry, and runs it on ACI with a public DNS name.
+- [`deploy/aci.yaml`](deploy/aci.yaml) — the same thing as a declarative container-group definition.
+
+**Deploy it (one command):**
+
+```bash
+az login
+./deploy/deploy-azure.sh
+```
+
+When it finishes it prints the public URL of your container. From then on, the proxy is a live cloud service: point your agents (or the simulator) at that URL instead of `localhost`.
+
+```bash
+# Send a tool call to the deployed proxy — checked against the user's real permissions
+curl -X POST http://agentgate-proxy.eastus.azurecontainer.io:8000/execute-tool \
+  -H "X-API-Key: alice-key" -H "Content-Type: application/json" \
+  -d '{"tool_name": "read_file", "tool_args": {"bucket": "reports", "key": "q4.csv"}}'
+
+# Run the full attack simulator against the deployed pod
+python -m agentgate.simulator --mode live --url http://agentgate-proxy.eastus.azurecontainer.io:8000
+```
+
+> Prefer the declarative file? After pushing your image and setting `image:` in `deploy/aci.yaml`, run:
+> `az group create -n agentgate-rg -l eastus && az container create -g agentgate-rg --file deploy/aci.yaml`
+
 ## Using it with your AI agent
 
 In production you don't call AgentGate with `curl` — your agent does. The pattern is: **wrap each agent tool so that instead of calling AWS directly, it calls AgentGate with the user's API key.** AgentGate then enforces that user's permissions on every call.
@@ -128,7 +163,8 @@ In production you don't call AgentGate with `curl` — your agent does. The patt
 ```python
 import httpx
 
-AGENTGATE_URL = "http://localhost:8000"
+# Point this at your deployed proxy (e.g. the Azure URL), or localhost in dev.
+AGENTGATE_URL = "http://agentgate-proxy.eastus.azurecontainer.io:8000"
 
 def make_tool(user_api_key: str):
     """Give the agent a tool that routes through AgentGate under a specific user."""
